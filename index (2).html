@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0B1F3A">
+<title>NGA Check-in</title>
+<style>
+  :root {
+    --navy: #0B1F3A; --navy-2: #13294B; --navy-3: #1C3560; --line: #2A4573;
+    --amber: #F5B301; --text: #F4F7FB; --muted: #9DB4D3;
+    --ok: #12A150; --warn: #E8A200; --bad: #D93A3A; --wait: #2F6FD6;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--navy); color: var(--text);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  body { padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+  button { font: inherit; cursor: pointer; border: 0; border-radius: 12px; }
+  input { font: inherit; }
+  .hidden { display: none !important; }
+  .wrap { max-width: 560px; margin: 0 auto; padding: 12px 16px 32px; }
+
+  header { display: flex; align-items: center; gap: 10px; padding: 4px 0 10px; }
+  .brand { font-weight: 800; letter-spacing: 2px; font-size: 15px; }
+  .brand b { color: var(--amber); }
+  .device { margin-left: auto; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .icon-btn { background: var(--navy-3); color: var(--text); width: 40px; height: 40px; font-size: 20px; }
+
+  .board { display: flex; align-items: center; gap: 12px; background: var(--navy-2); border: 1px solid var(--line);
+    border-radius: 14px; padding: 10px 14px; margin-bottom: 12px; }
+  .count { font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .count small { font-size: 16px; color: var(--muted); font-weight: 600; }
+  .count-label { font-size: 12px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
+  .net { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot.on { background: var(--ok); } .dot.off { background: var(--bad); } .dot.queue { background: var(--warn); }
+
+  .cam { position: relative; background: #000; border-radius: 18px; overflow: hidden; aspect-ratio: 1 / 1;
+    border: 1px solid var(--line); }
+  /* absolute, so the video gets the box's size in every browser (Safari can leave a % height at 0) */
+  #reader { position: absolute !important; inset: 0; }
+  #reader video { position: absolute; inset: 0; width: 100% !important; height: 100% !important; object-fit: cover; }
+  .cam-idle { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 14px; text-align: center; padding: 20px; color: var(--muted); }
+  .big-btn { background: var(--amber); color: var(--navy); font-weight: 800; font-size: 18px; padding: 14px 26px; }
+  .cam-tools { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 8px; z-index: 2; }
+  .cam-tools button { background: rgba(11,31,58,.75); color: #fff; padding: 8px 12px; font-size: 14px; }
+
+  .result { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; text-align: center; padding: 20px; color: #fff; }
+  .result.ok { background: var(--ok); } .result.warn { background: var(--warn); color: #1d1500; }
+  .result.bad { background: var(--bad); } .result.wait, .result.dc { background: var(--wait); }
+  .result .r-title { font-size: 15px; font-weight: 800; letter-spacing: 3px; text-transform: uppercase; opacity: .9; }
+  .result .r-name { font-size: clamp(26px, 8vw, 40px); font-weight: 800; line-height: 1.1; margin: 10px 0 6px; word-break: break-word; }
+  .result .r-sub { font-size: 17px; opacity: .95; white-space: pre-line; }
+  .r-actions { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 340px; margin-top: 14px; }
+  .r-actions button { padding: 13px; font-size: 17px; font-weight: 800; }
+  #dcSame { background: #fff; color: #0B6B36; } #dcDiff { background: rgba(0,0,0,.28); color: #fff; }
+  .dc-banner { background: var(--wait); color: #fff; border-radius: 12px; padding: 10px 14px; font-size: 14px;
+    font-weight: 700; margin-bottom: 12px; }
+  .wrong { color: #FF8A8A; font-size: 14px; font-weight: 700; }
+  .result .r-icon { font-size: 54px; line-height: 1; }
+  .result .r-tap { position: absolute; bottom: 12px; font-size: 12px; opacity: .75; }
+
+  .panel { background: var(--navy-2); border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin-top: 12px; }
+  .panel h2 { margin: 0 0 8px; font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); }
+  .search { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--navy); color: var(--text); font-size: 16px; }
+  .search::placeholder { color: var(--muted); }
+  ul.list { list-style: none; margin: 8px 0 0; padding: 0; }
+  ul.list li { display: flex; align-items: center; gap: 10px; padding: 9px 2px; border-top: 1px solid var(--line); }
+  ul.list li:first-child { border-top: 0; }
+  .who { flex: 1; min-width: 0; }
+  .who .n { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .who .m { font-size: 13px; color: var(--muted); }
+  .tag { font-size: 12px; font-weight: 800; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+  .tag.ok { background: rgba(18,161,80,.2); color: #5BE39A; } .tag.warn { background: rgba(232,162,0,.2); color: #FFD25E; }
+  .tag.bad { background: rgba(217,58,58,.2); color: #FF8A8A; } .tag.wait { background: rgba(47,111,214,.25); color: #9CC2FF; }
+  .small-btn { background: var(--navy-3); color: var(--text); padding: 7px 12px; font-size: 14px; }
+  .small-btn.primary { background: var(--amber); color: var(--navy); font-weight: 800; }
+  .empty { color: var(--muted); font-size: 14px; padding: 6px 2px; }
+
+  .setup label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+  .setup .row { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+  .msg { margin-top: 10px; font-size: 14px; }
+  .msg.err { color: #FF8A8A; } .msg.good { color: #5BE39A; }
+  .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 20; max-width: 92vw;
+    background: #111; color: #fff; padding: 12px 16px; border-radius: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.4); font-size: 14px; }
+  code { background: var(--navy); padding: 2px 6px; border-radius: 6px; word-break: break-all; }
+  .booths { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0 12px; }
+  .booths button { background: var(--amber); color: var(--navy); font-weight: 800; font-size: 22px; padding: 18px 0; }
+  .row input { flex: 1; min-width: 0; width: auto; }
+  .menu { display: grid; gap: 8px; }
+  .menu button { padding: 13px 14px; text-align: left; }
+  .qr { background: #fff; border-radius: 14px; padding: 14px; margin: 12px auto; max-width: 340px; }
+  .qr svg { display: block; width: 100%; height: auto; }
+  .steps { margin: 4px 0 6px; padding-left: 22px; }
+  .steps li { margin: 4px 0; }
+  .hint { background: var(--navy-3); color: var(--text); border-radius: 10px; padding: 8px 12px; margin: 0 0 10px;
+    font-size: 14px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">✈ <b>NGA</b> <span id="modeName">CHECK-IN</span></div>
+    <div class="device" id="deviceLabel"></div>
+    <button class="icon-btn" id="settingsBtn" title="Settings" aria-label="Settings">⚙</button>
+  </header>
+
+  <!-- The registration lead connects once here; everyone else scans the lead's setup QR. -->
+  <section class="panel setup hidden" id="setup">
+    <h2>Connect to the check-in sheet</h2>
+    <div class="empty">Setting up a booth phone? Don't type anything here. Point this phone's camera
+      at the <b>setup QR</b> on the registration lead's screen.</div>
+    <label for="apiInput">Web app URL (Apps Script &gt; Deploy)</label>
+    <input class="search" id="apiInput" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off">
+    <label for="keyInput">Staff key</label>
+    <input class="search" id="keyInput" type="password" autocomplete="off">
+    <div class="row">
+      <button class="small-btn primary" id="saveBtn">Connect</button>
+      <button class="small-btn hidden" id="closeSetupBtn">Cancel</button>
+    </div>
+    <div class="msg" id="setupMsg"></div>
+  </section>
+
+  <section class="panel hidden" id="booth">
+    <h2>Which booth is this phone?</h2>
+    <div class="booths" id="boothButtons"></div>
+    <div class="row">
+      <input class="search" id="boothInput" placeholder="Other name, e.g. VIP gate" autocomplete="off">
+      <button class="small-btn primary" id="boothOtherBtn">OK</button>
+    </div>
+    <div class="msg" id="boothMsg"></div>
+  </section>
+
+  <section class="panel hidden" id="menu">
+    <h2>Settings</h2>
+    <div class="menu">
+      <button class="small-btn primary" id="shareOpenBtn">📱 Set up another phone</button>
+      <button class="small-btn" id="changeBoothBtn">Change this phone's booth</button>
+      <button class="small-btn" id="refreshBtn">Reload the attendee list</button>
+      <button class="small-btn" id="connBtn">Connection settings (web app URL, staff key)</button>
+      <button class="small-btn" id="closeMenuBtn">Close</button>
+    </div>
+  </section>
+
+  <section class="panel hidden" id="share">
+    <h2>Set up another phone</h2>
+    <ol class="steps">
+      <li>Open the <b>camera</b> on the other phone and point it at this code.</li>
+      <li>Tap the link that pops up.</li>
+      <li>Tap the booth (UoB, BAU, LAU, ...). Scanning starts by itself.</li>
+    </ol>
+    <div class="qr" id="shareQr"></div>
+    <div class="msg err" id="shareWarn"></div>
+    <div class="row">
+      <button class="small-btn" id="copyLinkBtn">Copy as a link instead</button>
+      <button class="small-btn primary" id="closeShareBtn">Done</button>
+    </div>
+    <div class="msg" id="shareMsg"></div>
+    <div class="empty">This code contains the staff key. Show it only to the registration team, and don't
+      print it or leave it on a booth.</div>
+  </section>
+
+  <main id="main" class="hidden">
+    <div class="dc-banner hidden" id="dcBanner">Double-check before sending: point the camera at each pass on the
+      laptop's review page to see whose it is. Nobody is checked in here.</div>
+    <div class="board">
+      <div>
+        <div class="count"><span id="checkedCount">–</span> <small>/ <span id="totalCount">–</span></small>
+          <span class="wrong" id="dcWrong"></span></div>
+        <div class="count-label" id="countLabel">checked in</div>
+      </div>
+      <div class="net"><span class="dot" id="netDot"></span><span id="netText">connecting…</span></div>
+    </div>
+
+    <div class="hint hidden" id="soundHint">🔈 Tap anywhere once to turn on the beep</div>
+    <div class="cam">
+      <div id="reader"></div>
+      <div class="cam-idle" id="camIdle">
+        <div style="font-size:44px">📷</div>
+        <button class="big-btn" id="startBtn">Start scanning</button>
+        <div style="font-size:14px" id="camHint">Point the camera at the attendee's boarding pass QR code.</div>
+      </div>
+      <div class="cam-tools hidden" id="camTools">
+        <button id="switchCamBtn">↺ Camera</button>
+        <button id="stopBtn">Stop</button>
+      </div>
+      <div class="result hidden" id="result" role="status" aria-live="assertive">
+        <div class="r-icon" id="rIcon"></div>
+        <div class="r-title" id="rTitle"></div>
+        <div class="r-name" id="rName"></div>
+        <div class="r-sub" id="rSub"></div>
+        <div class="r-actions hidden" id="rActions">
+          <button id="dcSame">✓ Same name as on the pass</button>
+          <button id="dcDiff">✗ Different name</button>
+        </div>
+        <div class="r-tap" id="rTap">tap to continue</div>
+      </div>
+    </div>
+
+    <section class="panel" id="searchPanel">
+      <h2>No QR? Find them by name or ID</h2>
+      <input class="search" id="searchInput" placeholder="Type a name, LeMSIC ID or ticket code" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <ul class="list" id="searchResults"></ul>
+    </section>
+
+    <section class="panel">
+      <h2>Recent scans on this device</h2>
+      <ul class="list" id="recentList"><li class="empty">Nothing scanned yet.</li></ul>
+    </section>
+  </main>
+</div>
+<div class="toast hidden" id="toast"></div>
+
+<script src="html5-qrcode.min.js"></script>
+<script src="qrcode-generator.js"></script>
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem('nga.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem('nga.' + k, JSON.stringify(v)); } catch (e) { /* private mode */ } },
+  };
+
+  // ── state ────────────────────────────────────────────────────────────────
+  let cfg = store.get('cfg', { api: '', key: '', device: '', mode: '' });
+
+  // Setup QR / link: index.html#api=...&key=...  The phone then only needs to pick its booth.
+  // With &mode=double-check it opens the double-check instead (before the emails; nobody is checked in).
+  let fromSetupLink = false;
+  if (location.hash.length > 1) {
+    const p = new URLSearchParams(location.hash.slice(1));
+    if (p.get('api') && p.get('key')) {
+      cfg.api = p.get('api').trim();
+      cfg.key = p.get('key');
+      cfg.mode = p.get('mode') === 'double-check' ? 'dc' : '';
+      store.set('cfg', cfg);
+      fromSetupLink = true;
+    }
+    history.replaceState(null, '', location.pathname + location.search);   // keep the key out of sight
+  }
+  const DC = cfg.mode === 'dc';
+
+  let roster = store.get('roster', { day: '', people: [], stats: null, fetchedAt: 0 });
+  let queue = store.get('queue', []);          // check-ins made while offline, waiting to sync
+  let recent = store.get(DC ? 'dcRecent' : 'recent', []);
+  let byCode = new Map();
+  let online = null, lastScan = { code: '', time: 0 }, busy = false, hideTimer = null, pending = null;
+  let scanner = null, cameras = [], camIndex = 0, audio = null, wakeLock = null;
+
+  // ── helpers ──────────────────────────────────────────────────────────────
+  function normCode(v) {
+    let s = String(v || '').toUpperCase().replace(/\s+/g, '');
+    const dash = s.lastIndexOf('-');
+    if (dash >= 0) s = s.slice(0, dash + 1) + s.slice(dash + 1).replace(/O/g, '0').replace(/[IL]/g, '1');
+    return s;
+  }
+  const fold = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const nowHM = () => new Date().toTimeString().slice(0, 5);
+  const firstName = n => String(n || '').trim().split(/\s+/)[0] || '';
+
+  function li(html) { const el = document.createElement('li'); el.innerHTML = html; return el; }
+  function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+  function toast(text, ms = 4000) {
+    const t = $('toast'); t.textContent = text; t.classList.remove('hidden');
+    clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.add('hidden'), ms);
+  }
+
+  function beep(kind) {
+    try {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+      const tones = { ok: [[880, 0, .09], [1320, .11, .12]], warn: [[520, 0, .14], [520, .2, .14]], bad: [[220, 0, .45]] }[kind];
+      if (!tones) return;
+      for (const [f, start, dur] of tones) {
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.frequency.value = f; o.type = kind === 'bad' ? 'square' : 'sine';
+        g.gain.setValueAtTime(.25, audio.currentTime + start);
+        g.gain.exponentialRampToValueAtTime(.001, audio.currentTime + start + dur);
+        o.connect(g).connect(audio.destination);
+        o.start(audio.currentTime + start); o.stop(audio.currentTime + start + dur + .02);
+      }
+    } catch (e) { /* no audio */ }
+    if (navigator.vibrate) navigator.vibrate({ ok: 80, warn: [120, 80, 120], bad: [400] }[kind] || 0);
+  }
+
+  // ── talking to the Google Sheet ──────────────────────────────────────────
+  class ApiError extends Error {}
+
+  async function api(action, payload = {}) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    let res;
+    try {
+      // text/plain keeps this a "simple" request, which Apps Script accepts cross-origin.
+      res = await fetch(cfg.api, { method: 'POST', body: JSON.stringify({ ...payload, action, key: cfg.key }),
+                                   redirect: 'follow', signal: ctrl.signal });
+    } finally { clearTimeout(timer); }
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    let data;
+    try { data = await res.json(); } catch (e) { throw new ApiError('The URL did not answer like the check-in web app. Check the URL and that it is deployed with access "Anyone".'); }
+    if (!data.ok) throw new ApiError(data.error || 'Unknown error');
+    setOnline(true);
+    if (data.stats) setStats(data.stats);
+    return data;
+  }
+
+  function setOnline(v) {
+    online = v;
+    const dot = $('netDot');
+    dot.className = 'dot ' + (queue.length ? 'queue' : v ? 'on' : 'off');
+    $('netText').textContent = queue.length ? `${queue.length} to sync` : v ? 'online' : 'offline';
+  }
+
+  function setStats(s) {
+    if (DC) {
+      $('checkedCount').textContent = s.checked;
+      $('totalCount').textContent = s.total;
+      $('dcWrong').textContent = s.mismatches ? `· ${s.mismatches} different` : '';
+      return;
+    }
+    roster.stats = s;
+    $('checkedCount').textContent = s.checkedIn;
+    $('totalCount').textContent = s.total;
+  }
+
+  function indexRoster() {
+    byCode = new Map(roster.people.map(p => [p[0], { code: p[0], name: p[1], id: p[2], at: p[3], by: p[4] }]));
+    // Keep what this device checked in offline, even if the sheet doesn't have it yet.
+    for (const q of queue) { const p = byCode.get(q.code); if (p && !p.at) { p.at = q.at; p.by = cfg.device; } }
+    if (DC) return;
+    if (roster.stats) setStats(roster.stats);
+    $('countLabel').textContent = roster.day ? `checked in · ${roster.day}` : 'checked in';
+  }
+
+  async function refreshRoster() {
+    if (DC) {   // only the counts; the names come one pass at a time
+      try { await api('dcstats'); return true; }
+      catch (e) { if (e instanceof ApiError) toast('⚠ ' + e.message, 7000); else setOnline(false); return false; }
+    }
+    try {
+      const data = await api('roster');
+      roster = { day: data.day, people: data.people, stats: data.stats, fetchedAt: Date.now() };
+      store.set('roster', roster);
+      indexRoster();
+      renderSearch();
+      return true;
+    } catch (e) {
+      if (e instanceof ApiError) toast('⚠ ' + e.message, 7000); else setOnline(false);
+      return false;
+    }
+  }
+
+  function remember(entry) {
+    const p = byCode.get(entry.code);
+    if (p && entry.status === 'checked_in') { p.at = entry.at; p.by = cfg.device; }
+    if (p && entry.status === 'already' && !p.at) { p.at = entry.at; p.by = entry.by; }
+    if (p && entry.status === 'undone') { p.at = ''; p.by = ''; }
+    // keep the stored roster in sync, so a reload while offline still knows who's in
+    roster.people = [...byCode.values()].map(x => [x.code, x.name, x.id, x.at || '', x.by || '']);
+    store.set('roster', roster);
+  }
+
+  async function flushQueue() {
+    while (queue.length) {
+      const item = queue[0];
+      let res;
+      try { res = await api('checkin', { code: item.code, device: cfg.device, scannedAt: item.scannedAt }); }
+      catch (e) { setOnline(false); return; }
+      queue.shift(); store.set('queue', queue);
+      if (res.status === 'already' && res.by !== cfg.device) {
+        toast(`⚠ Synced: ${res.name} had already checked in at ${res.at}${res.by ? ' (' + res.by + ')' : ''}`, 8000);
+      }
+      if (res.status === 'invalid') toast(`⚠ Synced: code ${item.code} is not on the list`, 8000);
+    }
+    setOnline(true);
+  }
+
+  // ── scanning ─────────────────────────────────────────────────────────────
+  function showResult(kind, title, name, sub, ms) {
+    const icons = { ok: '✓', warn: '!', bad: '✕', wait: '…', dc: '' };
+    $('result').className = 'result ' + kind;
+    $('rIcon').textContent = icons[kind];
+    $('rActions').classList.toggle('hidden', kind !== 'dc');
+    $('rTap').textContent = kind === 'dc' ? 'tap here to skip' : 'tap to continue';
+    $('rTitle').textContent = title;
+    $('rName').textContent = name || '';
+    $('rSub').textContent = sub || '';
+    clearTimeout(hideTimer);
+    if (ms) hideTimer = setTimeout(hideResult, ms);
+  }
+  function hideResult() { $('result').classList.add('hidden'); busy = false; pending = null; }
+
+  function addRecent(entry) {
+    recent.unshift({ ...entry, time: entry.status === 'checked_in' && entry.at ? entry.at : nowHM() });
+    recent = recent.slice(0, 25);
+    store.set(DC ? 'dcRecent' : 'recent', recent);
+    renderRecent();
+  }
+
+  // Double-check: show whose pass this is, then the person compares it with the name printed on the pass.
+  async function lookUp(code, manual) {
+    // the same pass stays in front of the camera after answering: wait for a different one
+    if (!manual && (busy || code === lastScan.code)) return;
+    lastScan = { code, time: Date.now() };
+    busy = true;
+    showResult('wait', 'Looking up…', code, '');
+    let res;
+    try { res = await api('lookup', { code }); }
+    catch (e) {
+      beep('bad');
+      if (e instanceof ApiError) showResult('bad', 'Problem', e.message, 'Check the settings (⚙)', 6000);
+      else { setOnline(false); showResult('bad', 'No internet', '', 'The double-check needs a connection. Try again.', 5000); }
+      lastScan.code = '';
+      return;
+    }
+    if (res.status !== 'found') {
+      beep('bad');
+      showResult('bad', 'Not a valid pass', code, 'This code is not on the list', 5000);
+      addRecent({ code, name: '', status: 'invalid' });
+      return;
+    }
+    beep('ok');
+    pending = res;
+    const who = [res.id ? 'ID ' + res.id : '', res.email].filter(Boolean).join(' · ');
+    showResult('dc', 'This pass belongs to', res.name,
+               who + (res.doubleCheck ? `\nAlready marked ${res.doubleCheck}` : ''));
+  }
+
+  async function answer(same) {
+    const p = pending;
+    if (!p) return;
+    pending = null;
+    showResult('wait', 'Saving…', p.name, '');
+    try {
+      await api('doublecheck', { code: p.code, ok: same, device: 'Phone' });
+    } catch (e) {
+      beep('bad');
+      showResult('bad', 'Not saved', p.name, e instanceof ApiError ? e.message : 'No internet. Scan it again when online.', 5000);
+      lastScan.code = '';
+      return;
+    }
+    if (same) { beep('ok'); showResult('ok', 'Same name ✓', p.name, '', 1200); }
+    else { beep('warn'); showResult('bad', 'Marked as different', p.name, "Don't send this email: check this pass on the laptop.", 5000); }
+    addRecent({ code: p.code, name: p.name, status: same ? 'same' : 'different' });
+  }
+
+  async function handleCode(raw, manual = false) {
+    const code = normCode(raw);
+    if (!code) return;
+    if (DC) return lookUp(code, manual);
+    const now = Date.now();
+    if (!manual && (busy || (code === lastScan.code && now - lastScan.time < 6000))) return;
+    lastScan = { code, time: now };
+    busy = true;
+    const local = byCode.get(code);
+    showResult('wait', 'Checking…', local ? local.name : code, '');
+
+    let res;
+    try {
+      res = await api('checkin', { code, device: cfg.device, scannedAt: new Date().toISOString() });
+    } catch (e) {
+      if (e instanceof ApiError) {
+        beep('bad'); showResult('bad', 'Problem', e.message, 'Check the settings (⚙)', 6000);
+        return;
+      }
+      setOnline(false);
+      res = offlineCheckIn(code, local);
+    }
+    remember(res);
+    const name = res.name || (local && local.name) || '';
+    if (res.status === 'checked_in') {
+      beep('ok');
+      showResult('ok', 'Welcome aboard', name, `${res.id ? 'ID ' + res.id + ' · ' : ''}checked in ${res.at}${res.offline ? ' · offline, will sync' : ''}`, 2500);
+    } else if (res.status === 'already') {
+      beep('warn');
+      showResult('warn', 'Already checked in', name, `at ${res.at || '?'}${res.by ? ' by ' + res.by : ''}${res.offline ? ' (offline check)' : ''}`, 5000);
+    } else {
+      beep('bad');
+      showResult('bad', 'Not a valid pass', code, res.offline ? 'Not on this device\'s list (offline)' : 'This code is not on the list', 5000);
+    }
+    addRecent({ code, name, status: res.status, at: res.at || '', offline: !!res.offline });
+    renderSearch();
+  }
+
+  function offlineCheckIn(code, local) {
+    if (!local) return { status: 'invalid', code, offline: true };
+    if (local.at) return { status: 'already', code, name: local.name, id: local.id, at: local.at, by: local.by, offline: true };
+    const at = nowHM();
+    queue.push({ code, scannedAt: new Date().toISOString(), at });
+    store.set('queue', queue);
+    setOnline(false);
+    if (roster.stats) setStats({ ...roster.stats, checkedIn: roster.stats.checkedIn + 1 });
+    return { status: 'checked_in', code, name: local.name, id: local.id, at, offline: true };
+  }
+
+  async function undo(code) {
+    const p = byCode.get(code);
+    if (!confirm(`Undo the check-in of ${p ? p.name : code}?`)) return;
+    const dropRecent = () => {
+      recent = recent.filter(r => !(r.code === code && r.status === 'checked_in'));
+      store.set('recent', recent);
+      renderRecent(); renderSearch();
+    };
+    if (queue.some(q => q.code === code)) {   // never reached the sheet: just forget it
+      queue = queue.filter(q => q.code !== code);
+      store.set('queue', queue);
+      remember({ code, status: 'undone' });
+      if (roster.stats) setStats({ ...roster.stats, checkedIn: Math.max(0, roster.stats.checkedIn - 1) });
+      setOnline(online);
+      dropRecent();
+      toast(`Check-in of ${p ? p.name : code} undone`);
+      return;
+    }
+    try {
+      const res = await api('undo', { code });
+      remember(res);
+      dropRecent();
+      toast(`Check-in of ${res.name || code} undone`);
+    } catch (e) { toast('Could not undo: ' + (e instanceof ApiError ? e.message : 'offline'), 6000); }
+  }
+
+  // Browsers only allow sound after someone has touched the page. iPhones can also leave the camera
+  // black until then, or stop it while the phone is locked: a tap starts it again.
+  function cameraStuck() {
+    const v = document.querySelector('#reader video');
+    return !!(v && running() && (v.paused || v.readyState < 2));
+  }
+  function updateHint() {
+    const stuck = cameraStuck(), mute = !!audio && audio.state !== 'running';
+    $('soundHint').textContent = stuck ? '📷 Camera black? Tap here once to start it' : '🔈 Tap anywhere once to turn on the beep';
+    $('soundHint').classList.toggle('hidden', !stuck && !mute);
+  }
+  function unlockSound() {
+    try {
+      audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+      if (audio.state === 'suspended') audio.resume().then(updateHint, () => {});
+    } catch (e) { /* no audio */ }
+    const v = document.querySelector('#reader video');
+    if (v && running()) {
+      const track = v.srcObject && v.srcObject.getVideoTracks()[0];
+      if (track && track.readyState === 'ended') stopCamera().then(() => startCamera());
+      else if (v.paused) v.play().then(updateHint, () => {});
+    }
+    updateHint();
+  }
+  document.addEventListener('pointerdown', unlockSound);
+  setInterval(updateHint, 1500);
+
+  // The scanner's own state, 2 = scanning, 3 = paused. (Its isScanning only turns true once the video
+  // plays, which on an iPhone can be after the camera is already taken.)
+  function running() { return !!scanner && [2, 3].includes(scanner.getState()); }
+
+  // A booth tap and a "Start scanning" tap can come together: they share one start.
+  let starting = null;
+  function startCamera(auto = false) {
+    unlockSound();
+    if (!starting) starting = openCamera(auto).finally(() => { starting = null; });
+    return starting;
+  }
+
+  async function openCamera(auto) {
+    if (running()) { showCamTools(); return; }
+    if (!window.Html5Qrcode) { toast('Scanner library failed to load. Use the search box instead.', 8000); return; }
+    scanner = scanner || new Html5Qrcode('reader', { formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE], verbose: false });
+    const camConfig = {
+      fps: 12,
+      qrbox: (w, h) => { const s = Math.floor(Math.min(w, h) * 0.72); return { width: s, height: s }; },
+      experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+    };
+    const source = cameras.length ? { deviceId: { exact: cameras[camIndex].id } } : { facingMode: 'environment' };
+    try {
+      await scanner.start(source, camConfig, text => handleCode(text), () => {});
+    } catch (e) {
+      if (!running()) {
+        if (!auto) toast('Could not open the camera: ' + (e && e.message || e) + '. Allow camera access for this page.', 9000);
+        return;   // the Start scanning button stays there
+      }
+    }
+    showCamTools();
+    try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* optional */ }
+  }
+  function showCamTools() {
+    $('camIdle').classList.add('hidden');
+    $('camTools').classList.remove('hidden');
+  }
+
+  async function stopCamera() {
+    if (starting) await starting.catch(() => {});
+    if (running()) await scanner.stop().catch(() => {});
+    $('camIdle').classList.remove('hidden');
+    $('camTools').classList.add('hidden');
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  }
+
+  async function switchCamera() {
+    await stopCamera();
+    if (!cameras.length) {
+      // Listing the cameras opens the camera again, which blacks out a running scan on iPhones,
+      // so it only happens here, with the scan stopped.
+      try { cameras = await Html5Qrcode.getCameras(); } catch (e) { cameras = []; }
+      const back = cameras.findIndex(c => /back|rear|environment/i.test(c.label));
+      camIndex = back >= 0 ? back : 0;
+    }
+    if (cameras.length < 2) toast('Only one camera found');
+    else camIndex = (camIndex + 1) % cameras.length;
+    await startCamera();
+  }
+
+  // USB / Bluetooth QR scanners type the code and press Enter, like a keyboard.
+  let keyBuf = '', keyTime = 0;
+  document.addEventListener('keydown', e => {
+    if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    const t = Date.now();
+    if (t - keyTime > 150) keyBuf = '';
+    keyTime = t;
+    if (e.key === 'Enter') { if (keyBuf.length >= 6) handleCode(keyBuf, true); keyBuf = ''; }
+    else if (e.key.length === 1) keyBuf += e.key;
+  });
+
+  // ── lists ────────────────────────────────────────────────────────────────
+  const statusTag = { checked_in: ['ok', 'IN'], already: ['warn', 'AGAIN'], invalid: ['bad', 'INVALID'],
+                      same: ['ok', 'SAME'], different: ['bad', 'DIFF'] };
+
+  function renderRecent() {
+    const ul = $('recentList');
+    ul.innerHTML = '';
+    if (!recent.length) { ul.append(li('<span class="empty">Nothing scanned yet.</span>')); return; }
+    for (const r of recent) {
+      const [cls, label] = statusTag[r.status] || ['wait', r.status];
+      const el = li(`<span class="tag ${cls}">${label}</span>
+        <div class="who"><div class="n">${esc(r.name || r.code)}</div>
+        <div class="m">${esc(r.time)}${r.offline ? ' · offline' : ''}</div></div>`);
+      if (r.status === 'checked_in') {
+        const b = document.createElement('button');
+        b.className = 'small-btn'; b.textContent = 'Undo'; b.onclick = () => undo(r.code);
+        el.append(b);
+      }
+      ul.append(el);
+    }
+  }
+
+  function renderSearch() {
+    const q = fold($('searchInput').value.trim());
+    const ul = $('searchResults');
+    ul.innerHTML = '';
+    if (q.length < 2) return;
+    const qc = normCode(q);
+    const hits = [...byCode.values()].filter(p =>
+      fold(p.name).includes(q) || fold(p.id).startsWith(q) || (qc.length >= 4 && p.code.includes(qc))).slice(0, 8);
+    if (!hits.length) { ul.append(li('<span class="empty">No one found. Check the spelling, or they may not be registered.</span>')); return; }
+    for (const p of hits) {
+      const el = li(`<div class="who"><div class="n">${esc(p.name)}</div>
+        <div class="m">ID ${esc(p.id)}${p.at ? ' · in at ' + esc(p.at) + (p.by ? ' (' + esc(p.by) + ')' : '') : ''}</div></div>`);
+      const b = document.createElement('button');
+      b.className = 'small-btn' + (p.at ? '' : ' primary');
+      b.textContent = p.at ? 'Checked in' : 'Check in';
+      b.disabled = !!p.at;
+      b.onclick = () => { handleCode(p.code, true); $('searchInput').value = ''; renderSearch(); };
+      el.append(b);
+      ul.append(el);
+    }
+  }
+
+  // ── setup, booths and settings ───────────────────────────────────────────
+  const PANELS = ['setup', 'booth', 'menu', 'share'];
+  function openPanel(id) {
+    for (const p of PANELS) $(p).classList.toggle('hidden', p !== id);
+    window.scrollTo(0, 0);
+  }
+  function closePanels() { for (const p of PANELS) $(p).classList.add('hidden'); }
+  function setMsg(text, kind) { const m = $('setupMsg'); m.textContent = text; m.className = 'msg ' + (kind || ''); }
+  function boothMsg(text, kind) { const m = $('boothMsg'); m.textContent = text; m.className = 'msg ' + (kind || ''); }
+
+  async function loadRoster(report) {
+    if (DC) {
+      try {
+        const data = await api('dcstats');
+        report(`Connected ✓ ${data.stats.total} passes to double-check.`, 'good');
+        return true;
+      } catch (e) {
+        report(e instanceof ApiError ? e.message : 'Could not reach the check-in sheet. Check the internet connection.', 'err');
+        return false;
+      }
+    }
+    try {
+      const data = await api('roster');
+      roster = { day: data.day, people: data.people, stats: data.stats, fetchedAt: Date.now() };
+      store.set('roster', roster);
+      indexRoster();
+      report(`Connected ✓ ${data.people.length} attendees loaded.`, 'good');
+      return true;
+    } catch (e) {
+      report(e instanceof ApiError ? e.message : 'Could not reach the check-in sheet. Check the internet connection.', 'err');
+      return false;
+    }
+  }
+
+  // The registration lead, once: paste the web app URL and staff key.
+  function openSetup() {
+    $('apiInput').value = cfg.api; $('keyInput').value = cfg.key;
+    $('closeSetupBtn').classList.toggle('hidden', !(cfg.api && cfg.key && (DC || cfg.device)));
+    setMsg('');
+    openPanel('setup');
+  }
+  async function connect() {
+    const apiUrl = $('apiInput').value.trim(), key = $('keyInput').value.trim();
+    if (!/^https:\/\/script\.google(usercontent)?\.com\//.test(apiUrl)) { setMsg('That URL should start with https://script.google.com/macros/s/', 'err'); return; }
+    if (!key) { setMsg('Enter the staff key', 'err'); return; }
+    cfg.api = apiUrl; cfg.key = key;
+    store.set('cfg', cfg);
+    setMsg('Connecting…');
+    if (!await loadRoster(setMsg)) return;
+    if (DC) { closePanels(); showMain(); startCamera(); }
+    else if (cfg.device) { closePanels(); showMain(); } else { boothMsg(''); openPanel('booth'); }
+  }
+
+  // Every phone: one tap on its booth, and scanning starts. Edit BOOTHS to rename or add booths.
+  const BOOTHS = ['UoB', 'BAU', 'LAU', 'USJ', 'SGUB', 'USEK'];
+  for (const name of BOOTHS) {
+    const b = document.createElement('button');
+    b.textContent = name;
+    b.onclick = () => chooseBooth(name);
+    $('boothButtons').append(b);
+  }
+  async function chooseBooth(name) {
+    name = String(name || '').trim().slice(0, 30);
+    if (!name) return;
+    unlockSound();   // this tap also allows the beep
+    cfg.device = name;
+    store.set('cfg', cfg);
+    if (fromSetupLink || !roster.people.length) {
+      boothMsg('Connecting…');
+      if (!await loadRoster(boothMsg)) {
+        boothMsg($('boothMsg').textContent + ' Ask the registration lead to show the setup QR again.', 'err');
+        return;
+      }
+      fromSetupLink = false;
+    }
+    closePanels();
+    showMain();
+    setOnline(true);
+    startCamera();
+  }
+
+  // Show the setup QR so a teammate's phone is ready in seconds.
+  function setupLink() {
+    const p = { api: cfg.api, key: cfg.key };
+    if (DC) p.mode = 'double-check';
+    return location.href.split('#')[0] + '#' + new URLSearchParams(p).toString();
+  }
+  function openShare() {
+    const qr = qrcode(0, 'L');   // shown on a screen: the lowest error correction gives bigger squares
+    qrcode.stringToBytes = qrcode.stringToBytesFuncs['UTF-8'];
+    qr.addData(setupLink());
+    qr.make();
+    $('shareQr').innerHTML = qr.createSvgTag({ cellSize: 8, margin: 2, scalable: true });
+    $('shareWarn').textContent = location.protocol === 'file:'
+      ? "This page is open from a file on this computer, so other phones can't use this code. Put this folder online first (README > Other options > Live camera scanner)."
+      : '';
+    $('shareMsg').textContent = '';
+    openPanel('share');
+  }
+  async function copySetupLink() {
+    try {
+      await navigator.clipboard.writeText(setupLink());
+      $('shareMsg').textContent = 'Link copied. Send it privately (it contains the staff key).';
+    } catch (e) { $('shareMsg').textContent = setupLink(); }
+    $('shareMsg').className = 'msg good';
+  }
+
+  function showMain() {
+    $('main').classList.remove('hidden');
+    $('deviceLabel').textContent = DC ? '' : cfg.device;
+    indexRoster(); renderRecent(); renderSearch();
+  }
+
+  // ── wire up ──────────────────────────────────────────────────────────────
+  $('settingsBtn').onclick = () => (cfg.api && cfg.key && (DC || cfg.device) ? openPanel('menu') : openSetup());
+  $('saveBtn').onclick = connect;
+  $('closeSetupBtn').onclick = closePanels;
+  $('boothOtherBtn').onclick = () => chooseBooth($('boothInput').value);
+  $('boothInput').onkeydown = e => { if (e.key === 'Enter') chooseBooth($('boothInput').value); };
+  $('shareOpenBtn').onclick = openShare;
+  $('copyLinkBtn').onclick = copySetupLink;
+  $('closeShareBtn').onclick = closePanels;
+  $('changeBoothBtn').onclick = () => { boothMsg(''); openPanel('booth'); };
+  $('refreshBtn').onclick = async () => { closePanels(); if (await refreshRoster()) toast(`List reloaded: ${roster.people.length} attendees`); };
+  $('connBtn').onclick = openSetup;
+  $('closeMenuBtn').onclick = closePanels;
+  $('startBtn').onclick = () => startCamera();
+  $('stopBtn').onclick = stopCamera;
+  $('switchCamBtn').onclick = switchCamera;
+  $('result').onclick = hideResult;
+  $('dcSame').onclick = e => { e.stopPropagation(); answer(true); };
+  $('dcDiff').onclick = e => { e.stopPropagation(); answer(false); };
+  if (DC) {
+    document.title = 'NGA Double-check';
+    $('modeName').textContent = 'DOUBLE-CHECK';
+    $('dcBanner').classList.remove('hidden');
+    $('searchPanel').classList.add('hidden');
+    $('changeBoothBtn').classList.add('hidden');
+    $('countLabel').textContent = 'double-checked';
+    $('camHint').textContent = "Point the camera at a pass on the laptop's review page.";
+  }
+  $('searchInput').oninput = renderSearch;
+  $('searchInput').onkeydown = e => {
+    if (e.key === 'Enter') { const first = $('searchResults').querySelector('button.primary'); if (first) first.click(); }
+  };
+  window.addEventListener('online', () => flushQueue());
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && running() && navigator.wakeLock && !wakeLock)
+      navigator.wakeLock.request('screen').then(w => { wakeLock = w; }).catch(() => {});
+  });
+
+  if (DC && cfg.api && cfg.key) {
+    // Double-check: no booth to pick. The camera starts if the phone allows it, else "Start scanning".
+    showMain();
+    setOnline(navigator.onLine);
+    refreshRoster();
+    startCamera(true);
+  } else if (cfg.api && cfg.key && cfg.device && !fromSetupLink) {
+    // A phone that's already set up: straight back to scanning.
+    showMain();
+    setOnline(navigator.onLine);
+    refreshRoster().then(ok => { if (ok) flushQueue(); });
+    startCamera(true);
+  } else if (cfg.api && cfg.key) {
+    boothMsg('');
+    openPanel('booth');
+  } else {
+    openSetup();
+  }
+  // Keep the list fresh (check-ins from other booths) and retry anything saved offline.
+  setInterval(async () => {
+    if (!cfg.api || !cfg.key) return;
+    if (queue.length) await flushQueue();
+    if (!busy) await refreshRoster();
+  }, 30000);
+})();
+</script>
+</body>
+</html>
