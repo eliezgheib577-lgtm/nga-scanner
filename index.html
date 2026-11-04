@@ -9,7 +9,7 @@
   :root {
     --navy: #0B1F3A; --navy-2: #13294B; --navy-3: #1C3560; --line: #2A4573;
     --amber: #F5B301; --text: #F4F7FB; --muted: #9DB4D3;
-    --ok: #12A150; --warn: #E8A200; --bad: #D93A3A; --wait: #2F6FD6;
+    --ok: #12A150; --warn: #E8A200; --bad: #D93A3A; --wait: #2F6FD6; --out: #7B47D6;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--navy); color: var(--text);
@@ -37,8 +37,9 @@
 
   .cam { position: relative; background: #000; border-radius: 18px; overflow: hidden; aspect-ratio: 1 / 1;
     border: 1px solid var(--line); }
-  #reader { width: 100%; height: 100%; }
-  #reader video { width: 100% !important; height: 100% !important; object-fit: cover; }
+  /* absolute, so the video gets the box's size in every browser (Safari can leave a % height at 0) */
+  #reader { position: absolute !important; inset: 0; }
+  #reader video { position: absolute; inset: 0; width: 100% !important; height: 100% !important; object-fit: cover; }
   .cam-idle { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
     justify-content: center; gap: 14px; text-align: center; padding: 20px; color: var(--muted); }
   .big-btn { background: var(--amber); color: var(--navy); font-weight: 800; font-size: 18px; padding: 14px 26px; }
@@ -75,6 +76,13 @@
   .tag { font-size: 12px; font-weight: 800; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
   .tag.ok { background: rgba(18,161,80,.2); color: #5BE39A; } .tag.warn { background: rgba(232,162,0,.2); color: #FFD25E; }
   .tag.bad { background: rgba(217,58,58,.2); color: #FF8A8A; } .tag.wait { background: rgba(47,111,214,.25); color: #9CC2FF; }
+  .tag.out { background: rgba(123,71,214,.3); color: #D2BCFF; }
+  .result.out { background: var(--out); }
+  .dirs { display: grid; gap: 10px; }
+  .dir { padding: 18px 20px; font-size: 22px; font-weight: 800; text-align: left; color: #fff; }
+  .dir small { display: block; font-size: 14px; font-weight: 600; opacity: .9; margin-top: 4px; }
+  .dir.in { background: var(--ok); } .dir.out { background: var(--out); }
+  .out-banner { background: var(--out); }
   .small-btn { background: var(--navy-3); color: var(--text); padding: 7px 12px; font-size: 14px; }
   .small-btn.primary { background: var(--amber); color: var(--navy); font-weight: 800; }
   .empty { color: var(--muted); font-size: 14px; padding: 6px 2px; }
@@ -133,10 +141,19 @@
     <div class="msg" id="boothMsg"></div>
   </section>
 
+  <section class="panel hidden" id="direction">
+    <h2>What is this phone doing?</h2>
+    <div class="dirs">
+      <button class="dir in" id="dirIn">⬇ Checking in<small>Students arriving at the event</small></button>
+      <button class="dir out" id="dirOut">⬆ Checking out<small>Students leaving the event</small></button>
+    </div>
+  </section>
+
   <section class="panel hidden" id="menu">
     <h2>Settings</h2>
     <div class="menu">
       <button class="small-btn primary" id="shareOpenBtn">📱 Set up another phone</button>
+      <button class="small-btn" id="switchDirBtn">Switch this phone to checking out</button>
       <button class="small-btn" id="changeBoothBtn">Change this phone's booth</button>
       <button class="small-btn" id="refreshBtn">Reload the attendee list</button>
       <button class="small-btn" id="connBtn">Connection settings (web app URL, staff key)</button>
@@ -149,7 +166,7 @@
     <ol class="steps">
       <li>Open the <b>camera</b> on the other phone and point it at this code.</li>
       <li>Tap the link that pops up.</li>
-      <li>Tap the booth (UoB, BAU, LAU, ...). Scanning starts by itself.</li>
+      <li>Tap the booth (UoB, BAU, LAU, ...), then Checking in or Checking out. Scanning starts by itself.</li>
     </ol>
     <div class="qr" id="shareQr"></div>
     <div class="msg err" id="shareWarn"></div>
@@ -165,6 +182,7 @@
   <main id="main" class="hidden">
     <div class="dc-banner hidden" id="dcBanner">Double-check before sending: point the camera at each pass on the
       laptop's review page to see whose it is. Nobody is checked in here.</div>
+    <div class="dc-banner out-banner hidden" id="outBanner">Checking OUT: scan students as they leave.</div>
     <div class="board">
       <div>
         <div class="count"><span id="checkedCount">–</span> <small>/ <span id="totalCount">–</span></small>
@@ -236,12 +254,14 @@
       cfg.api = p.get('api').trim();
       cfg.key = p.get('key');
       cfg.mode = p.get('mode') === 'double-check' ? 'dc' : '';
+      cfg.dir = '';
       store.set('cfg', cfg);
       fromSetupLink = true;
     }
     history.replaceState(null, '', location.pathname + location.search);   // keep the key out of sight
   }
   const DC = cfg.mode === 'dc';
+  const OUT = () => cfg.dir === 'out';   // this phone checks people out (it can switch)
 
   let roster = store.get('roster', { day: '', people: [], stats: null, fetchedAt: 0 });
   let queue = store.get('queue', []);          // check-ins made while offline, waiting to sync
@@ -322,17 +342,30 @@
       return;
     }
     roster.stats = s;
-    $('checkedCount').textContent = s.checkedIn;
-    $('totalCount').textContent = s.total;
+    $('checkedCount').textContent = OUT() ? s.out || 0 : s.checkedIn;
+    $('totalCount').textContent = OUT() ? s.checkedIn : s.total;
+  }
+
+  // The counts from this phone's own copy of the list (used while offline).
+  function localStats() {
+    const people = [...byCode.values()];
+    const checkedIn = people.filter(p => p.at).length, out = people.filter(p => p.at && !p.inside).length;
+    return { total: people.length, checkedIn, inside: checkedIn - out, out };
   }
 
   function indexRoster() {
-    byCode = new Map(roster.people.map(p => [p[0], { code: p[0], name: p[1], id: p[2], at: p[3], by: p[4] }]));
-    // Keep what this device checked in offline, even if the sheet doesn't have it yet.
-    for (const q of queue) { const p = byCode.get(q.code); if (p && !p.at) { p.at = q.at; p.by = cfg.device; } }
+    byCode = new Map(roster.people.map(p => [p[0], { code: p[0], name: p[1], id: p[2], at: p[3], by: p[4], out: p[5] || '',
+                                                     inside: p[6] === undefined ? !!p[3] : !!p[6] }]));
+    // Keep what this device did offline, even if the sheet doesn't have it yet.
+    for (const q of queue) {
+      const p = byCode.get(q.code);
+      if (!p) continue;
+      if (q.action === 'checkout') { p.inside = false; p.out = q.at; }
+      else { if (!p.at) { p.at = q.at; p.by = cfg.device; } p.inside = true; p.out = ''; }
+    }
     if (DC) return;
-    if (roster.stats) setStats(roster.stats);
-    $('countLabel').textContent = roster.day ? `checked in · ${roster.day}` : 'checked in';
+    if (roster.stats) setStats(queue.length ? localStats() : roster.stats);
+    $('countLabel').textContent = (OUT() ? 'checked out' : 'checked in') + (roster.day ? ` · ${roster.day}` : '');
   }
 
   async function refreshRoster() {
@@ -354,12 +387,20 @@
   }
 
   function remember(entry) {
-    const p = byCode.get(entry.code);
-    if (p && entry.status === 'checked_in') { p.at = entry.at; p.by = cfg.device; }
-    if (p && entry.status === 'already' && !p.at) { p.at = entry.at; p.by = entry.by; }
-    if (p && entry.status === 'undone') { p.at = ''; p.by = ''; }
-    // keep the stored roster in sync, so a reload while offline still knows who's in
-    roster.people = [...byCode.values()].map(x => [x.code, x.name, x.id, x.at || '', x.by || '']);
+    const p = byCode.get(entry.code), s = entry.status;
+    if (p && s === 'checked_in') { p.at = entry.at; p.by = cfg.device; p.inside = true; p.out = ''; }
+    if (p && (s === 'back_in' || s === 'already')) {
+      if (!p.at) { p.at = entry.at; p.by = entry.by || cfg.device; }
+      p.inside = true; p.out = '';
+    }
+    if (p && (s === 'checked_out' || s === 'already_out')) { p.inside = false; p.out = entry.at; }
+    if (p && s === 'not_in') { p.at = ''; p.by = ''; p.inside = false; p.out = ''; }
+    saveRoster();
+  }
+
+  // keep the stored roster in sync, so a reload while offline still knows who's in
+  function saveRoster() {
+    roster.people = [...byCode.values()].map(x => [x.code, x.name, x.id, x.at || '', x.by || '', x.out || '', x.inside ? 1 : 0]);
     store.set('roster', roster);
   }
 
@@ -367,12 +408,16 @@
     while (queue.length) {
       const item = queue[0];
       let res;
-      try { res = await api('checkin', { code: item.code, device: cfg.device, scannedAt: item.scannedAt }); }
+      try { res = await api(item.action || 'checkin', { code: item.code, device: cfg.device, scannedAt: item.scannedAt }); }
       catch (e) { setOnline(false); return; }
       queue.shift(); store.set('queue', queue);
       if (res.status === 'already' && res.by !== cfg.device) {
         toast(`⚠ Synced: ${res.name} had already checked in at ${res.at}${res.by ? ' (' + res.by + ')' : ''}`, 8000);
       }
+      if (res.status === 'already_out' && res.by !== cfg.device) {
+        toast(`⚠ Synced: ${res.name} had already checked out at ${res.at}${res.by ? ' (' + res.by + ')' : ''}`, 8000);
+      }
+      if (res.status === 'not_in') toast(`⚠ Synced: ${res.name} never checked in, so their check-out wasn't saved`, 8000);
       if (res.status === 'invalid') toast(`⚠ Synced: code ${item.code} is not on the list`, 8000);
     }
     setOnline(true);
@@ -393,8 +438,9 @@
   }
   function hideResult() { $('result').classList.add('hidden'); busy = false; pending = null; }
 
+  const UNDOABLE = ['checked_in', 'back_in', 'checked_out'];
   function addRecent(entry) {
-    recent.unshift({ ...entry, time: entry.status === 'checked_in' && entry.at ? entry.at : nowHM() });
+    recent.unshift({ ...entry, time: UNDOABLE.includes(entry.status) && entry.at ? entry.at : nowHM() });
     recent = recent.slice(0, 25);
     store.set(DC ? 'dcRecent' : 'recent', recent);
     renderRecent();
@@ -456,27 +502,42 @@
     lastScan = { code, time: now };
     busy = true;
     const local = byCode.get(code);
-    showResult('wait', 'Checking…', local ? local.name : code, '');
+    const action = OUT() ? 'checkout' : 'checkin';
+    showResult('wait', OUT() ? 'Checking out…' : 'Checking…', local ? local.name : code, '');
 
     let res;
     try {
-      res = await api('checkin', { code, device: cfg.device, scannedAt: new Date().toISOString() });
+      res = await api(action, { code, device: cfg.device, scannedAt: new Date().toISOString() });
     } catch (e) {
       if (e instanceof ApiError) {
         beep('bad'); showResult('bad', 'Problem', e.message, 'Check the settings (⚙)', 6000);
         return;
       }
       setOnline(false);
-      res = offlineCheckIn(code, local);
+      res = offlineScan(code, local, action);
     }
     remember(res);
     const name = res.name || (local && local.name) || '';
+    const later = res.offline ? ' · offline, will sync' : '', offlineCheck = res.offline ? ' (offline check)' : '';
+    const where = res.by ? ' by ' + res.by : '';
     if (res.status === 'checked_in') {
       beep('ok');
-      showResult('ok', 'Welcome aboard', name, `${res.id ? 'ID ' + res.id + ' · ' : ''}checked in ${res.at}${res.offline ? ' · offline, will sync' : ''}`, 2500);
+      showResult('ok', 'Welcome aboard', name, `${res.id ? 'ID ' + res.id + ' · ' : ''}checked in ${res.at}${later}`, 2500);
+    } else if (res.status === 'back_in') {
+      beep('ok');
+      showResult('ok', 'Welcome back', name, `${res.left ? 'left at ' + res.left + ' · ' : ''}back in ${res.at}${later}`, 2500);
+    } else if (res.status === 'checked_out') {
+      beep('ok');
+      showResult('out', 'Checked out', name, `${res.id ? 'ID ' + res.id + ' · ' : ''}checked out ${res.at}${later}`, 3000);
     } else if (res.status === 'already') {
       beep('warn');
-      showResult('warn', 'Already checked in', name, `at ${res.at || '?'}${res.by ? ' by ' + res.by : ''}${res.offline ? ' (offline check)' : ''}`, 5000);
+      showResult('warn', 'Already checked in', name, `at ${res.at || '?'}${where}${offlineCheck}`, 5000);
+    } else if (res.status === 'already_out') {
+      beep('warn');
+      showResult('warn', 'Already checked out', name, `at ${res.at || '?'}${where}${offlineCheck}`, 5000);
+    } else if (res.status === 'not_in') {
+      beep('warn');
+      showResult('warn', 'Not checked in', name, `They haven't checked in yet${offlineCheck}`, 5000);
     } else {
       beep('bad');
       showResult('bad', 'Not a valid pass', code, res.offline ? 'Not on this device\'s list (offline)' : 'This code is not on the list', 5000);
@@ -485,56 +546,96 @@
     renderSearch();
   }
 
-  function offlineCheckIn(code, local) {
+  // No internet: decide from this phone's copy of the list, and send it to the sheet later.
+  function offlineScan(code, local, action) {
     if (!local) return { status: 'invalid', code, offline: true };
-    if (local.at) return { status: 'already', code, name: local.name, id: local.id, at: local.at, by: local.by, offline: true };
+    const base = { code, name: local.name, id: local.id, offline: true };
+    if (action === 'checkin' && local.inside) return { ...base, status: 'already', at: local.at, by: local.by };
+    if (action === 'checkout' && !local.at) return { ...base, status: 'not_in' };
+    if (action === 'checkout' && !local.inside) return { ...base, status: 'already_out', at: local.out };
     const at = nowHM();
-    queue.push({ code, scannedAt: new Date().toISOString(), at });
+    queue.push({ code, action, scannedAt: new Date().toISOString(), at,
+                 prev: { at: local.at, by: local.by, out: local.out, inside: local.inside } });
     store.set('queue', queue);
     setOnline(false);
-    if (roster.stats) setStats({ ...roster.stats, checkedIn: roster.stats.checkedIn + 1 });
-    return { status: 'checked_in', code, name: local.name, id: local.id, at, offline: true };
+    const res = action === 'checkout' ? { ...base, status: 'checked_out', at }
+      : local.at ? { ...base, status: 'back_in', at, left: local.out } : { ...base, status: 'checked_in', at };
+    remember(res);
+    setStats(localStats());
+    return res;
   }
 
+  // Takes back the person's latest check-in or check-out.
   async function undo(code) {
     const p = byCode.get(code);
-    if (!confirm(`Undo the check-in of ${p ? p.name : code}?`)) return;
-    const dropRecent = () => {
-      recent = recent.filter(r => !(r.code === code && r.status === 'checked_in'));
+    const entry = recent.find(r => r.code === code && UNDOABLE.includes(r.status));
+    const what = entry && entry.status === 'checked_out' ? 'check-out' : 'check-in';
+    if (!confirm(`Undo the ${what} of ${p ? p.name : code}?`)) return;
+    const done = label => {
+      recent = recent.filter(r => r !== entry);
       store.set('recent', recent);
       renderRecent(); renderSearch();
+      toast(`${label} of ${p ? p.name : code} undone`);
     };
-    if (queue.some(q => q.code === code)) {   // never reached the sheet: just forget it
-      queue = queue.filter(q => q.code !== code);
+    const q = queue.map(x => x.code).lastIndexOf(code);
+    if (q >= 0) {   // never reached the sheet: just forget it
+      const [item] = queue.splice(q, 1);
       store.set('queue', queue);
-      remember({ code, status: 'undone' });
-      if (roster.stats) setStats({ ...roster.stats, checkedIn: Math.max(0, roster.stats.checkedIn - 1) });
+      if (p && item.prev) Object.assign(p, item.prev);
+      saveRoster();
+      setStats(localStats());
       setOnline(online);
-      dropRecent();
-      toast(`Check-in of ${p ? p.name : code} undone`);
+      done(item.action === 'checkout' ? 'Check-out' : 'Check-in');
       return;
     }
     try {
       const res = await api('undo', { code });
-      remember(res);
-      dropRecent();
-      toast(`Check-in of ${res.name || code} undone`);
+      done(res.undid === 'OUT' ? 'Check-out' : 'Check-in');
+      refreshRoster();
     } catch (e) { toast('Could not undo: ' + (e instanceof ApiError ? e.message : 'offline'), 6000); }
   }
 
-  // Browsers only allow sound after someone has touched the page.
+  // Browsers only allow sound after someone has touched the page. iPhones can also leave the camera
+  // black until then, or stop it while the phone is locked: a tap starts it again.
+  function cameraStuck() {
+    const v = document.querySelector('#reader video');
+    return !!(v && running() && (v.paused || v.readyState < 2));
+  }
+  function updateHint() {
+    const stuck = cameraStuck(), mute = !!audio && audio.state !== 'running';
+    $('soundHint').textContent = stuck ? '📷 Camera black? Tap here once to start it' : '🔈 Tap anywhere once to turn on the beep';
+    $('soundHint').classList.toggle('hidden', !stuck && !mute);
+  }
   function unlockSound() {
     try {
       audio = audio || new (window.AudioContext || window.webkitAudioContext)();
-      if (audio.state === 'suspended') audio.resume();
+      if (audio.state === 'suspended') audio.resume().then(updateHint, () => {});
     } catch (e) { /* no audio */ }
-    $('soundHint').classList.toggle('hidden', !audio || audio.state === 'running');
+    const v = document.querySelector('#reader video');
+    if (v && running()) {
+      const track = v.srcObject && v.srcObject.getVideoTracks()[0];
+      if (track && track.readyState === 'ended') stopCamera().then(() => startCamera());
+      else if (v.paused) v.play().then(updateHint, () => {});
+    }
+    updateHint();
   }
   document.addEventListener('pointerdown', unlockSound);
+  setInterval(updateHint, 1500);
 
-  async function startCamera(auto = false) {
+  // The scanner's own state, 2 = scanning, 3 = paused. (Its isScanning only turns true once the video
+  // plays, which on an iPhone can be after the camera is already taken.)
+  function running() { return !!scanner && [2, 3].includes(scanner.getState()); }
+
+  // A booth tap and a "Start scanning" tap can come together: they share one start.
+  let starting = null;
+  function startCamera(auto = false) {
     unlockSound();
-    if (scanner && scanner.isScanning) return;
+    if (!starting) starting = openCamera(auto).finally(() => { starting = null; });
+    return starting;
+  }
+
+  async function openCamera(auto) {
+    if (running()) { showCamTools(); return; }
     if (!window.Html5Qrcode) { toast('Scanner library failed to load. Use the search box instead.', 8000); return; }
     scanner = scanner || new Html5Qrcode('reader', { formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE], verbose: false });
     const camConfig = {
@@ -546,30 +647,38 @@
     try {
       await scanner.start(source, camConfig, text => handleCode(text), () => {});
     } catch (e) {
-      if (!auto) toast('Could not open the camera: ' + (e && e.message || e) + '. Allow camera access for this page.', 9000);
-      return;   // the Start scanning button stays there
+      if (!running()) {
+        if (!auto) toast('Could not open the camera: ' + (e && e.message || e) + '. Allow camera access for this page.', 9000);
+        return;   // the Start scanning button stays there
+      }
     }
+    showCamTools();
+    try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* optional */ }
+  }
+  function showCamTools() {
     $('camIdle').classList.add('hidden');
     $('camTools').classList.remove('hidden');
-    try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* optional */ }
-    if (!cameras.length) {
-      try { cameras = await Html5Qrcode.getCameras(); } catch (e) { cameras = []; }
-      const back = cameras.findIndex(c => /back|rear|environment/i.test(c.label));
-      camIndex = back >= 0 ? back : 0;
-    }
   }
 
   async function stopCamera() {
-    if (scanner && scanner.isScanning) await scanner.stop();
+    if (starting) await starting.catch(() => {});
+    if (running()) await scanner.stop().catch(() => {});
     $('camIdle').classList.remove('hidden');
     $('camTools').classList.add('hidden');
     if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
   }
 
   async function switchCamera() {
-    if (cameras.length < 2) { toast('Only one camera found'); return; }
-    camIndex = (camIndex + 1) % cameras.length;
     await stopCamera();
+    if (!cameras.length) {
+      // Listing the cameras opens the camera again, which blacks out a running scan on iPhones,
+      // so it only happens here, with the scan stopped.
+      try { cameras = await Html5Qrcode.getCameras(); } catch (e) { cameras = []; }
+      const back = cameras.findIndex(c => /back|rear|environment/i.test(c.label));
+      camIndex = back >= 0 ? back : 0;
+    }
+    if (cameras.length < 2) toast('Only one camera found');
+    else camIndex = (camIndex + 1) % cameras.length;
     await startCamera();
   }
 
@@ -585,19 +694,22 @@
   });
 
   // ── lists ────────────────────────────────────────────────────────────────
-  const statusTag = { checked_in: ['ok', 'IN'], already: ['warn', 'AGAIN'], invalid: ['bad', 'INVALID'],
-                      same: ['ok', 'SAME'], different: ['bad', 'DIFF'] };
+  const statusTag = { checked_in: ['ok', 'IN'], back_in: ['ok', 'BACK'], checked_out: ['out', 'OUT'],
+                      already: ['warn', 'AGAIN'], already_out: ['warn', 'AGAIN'], not_in: ['warn', 'NOT IN'],
+                      invalid: ['bad', 'INVALID'], same: ['ok', 'SAME'], different: ['bad', 'DIFF'] };
 
   function renderRecent() {
     const ul = $('recentList');
     ul.innerHTML = '';
     if (!recent.length) { ul.append(li('<span class="empty">Nothing scanned yet.</span>')); return; }
+    const undoable = new Set();   // only each person's latest scan can be undone
     for (const r of recent) {
       const [cls, label] = statusTag[r.status] || ['wait', r.status];
       const el = li(`<span class="tag ${cls}">${label}</span>
         <div class="who"><div class="n">${esc(r.name || r.code)}</div>
         <div class="m">${esc(r.time)}${r.offline ? ' · offline' : ''}</div></div>`);
-      if (r.status === 'checked_in') {
+      if (UNDOABLE.includes(r.status) && !undoable.has(r.code)) {
+        undoable.add(r.code);
         const b = document.createElement('button');
         b.className = 'small-btn'; b.textContent = 'Undo'; b.onclick = () => undo(r.code);
         el.append(b);
@@ -617,11 +729,14 @@
     if (!hits.length) { ul.append(li('<span class="empty">No one found. Check the spelling, or they may not be registered.</span>')); return; }
     for (const p of hits) {
       const el = li(`<div class="who"><div class="n">${esc(p.name)}</div>
-        <div class="m">ID ${esc(p.id)}${p.at ? ' · in at ' + esc(p.at) + (p.by ? ' (' + esc(p.by) + ')' : '') : ''}</div></div>`);
+        <div class="m">ID ${esc(p.id)}${p.at ? ' · in at ' + esc(p.at) + (p.by ? ' (' + esc(p.by) + ')' : '') : ''}${
+          p.at && !p.inside && p.out ? ' · out at ' + esc(p.out) : ''}</div></div>`);
       const b = document.createElement('button');
-      b.className = 'small-btn' + (p.at ? '' : ' primary');
-      b.textContent = p.at ? 'Checked in' : 'Check in';
-      b.disabled = !!p.at;
+      const can = OUT() ? p.inside : !p.inside;
+      b.className = 'small-btn' + (can ? ' primary' : '');
+      b.textContent = OUT() ? (p.inside ? 'Check out' : p.at ? 'Checked out' : 'Not in')
+                            : (p.inside ? 'Inside' : p.at ? 'Back in' : 'Check in');
+      b.disabled = !can;
       b.onclick = () => { handleCode(p.code, true); $('searchInput').value = ''; renderSearch(); };
       el.append(b);
       ul.append(el);
@@ -629,7 +744,7 @@
   }
 
   // ── setup, booths and settings ───────────────────────────────────────────
-  const PANELS = ['setup', 'booth', 'menu', 'share'];
+  const PANELS = ['setup', 'booth', 'direction', 'menu', 'share'];
   function openPanel(id) {
     for (const p of PANELS) $(p).classList.toggle('hidden', p !== id);
     window.scrollTo(0, 0);
@@ -665,7 +780,7 @@
   // The registration lead, once: paste the web app URL and staff key.
   function openSetup() {
     $('apiInput').value = cfg.api; $('keyInput').value = cfg.key;
-    $('closeSetupBtn').classList.toggle('hidden', !(cfg.api && cfg.key && (DC || cfg.device)));
+    $('closeSetupBtn').classList.toggle('hidden', !(cfg.api && cfg.key && (DC || (cfg.device && cfg.dir))));
     setMsg('');
     openPanel('setup');
   }
@@ -678,11 +793,13 @@
     setMsg('Connecting…');
     if (!await loadRoster(setMsg)) return;
     if (DC) { closePanels(); showMain(); startCamera(); }
-    else if (cfg.device) { closePanels(); showMain(); } else { boothMsg(''); openPanel('booth'); }
+    else if (cfg.device && cfg.dir) { closePanels(); showMain(); }
+    else if (cfg.device) openPanel('direction');
+    else { boothMsg(''); openPanel('booth'); }
   }
 
   // Every phone: one tap on its booth, and scanning starts. Edit BOOTHS to rename or add booths.
-  const BOOTHS = ['UoB', 'BAU', 'LAU', 'USJ', 'SGUB', 'USEK'];
+  const BOOTHS = ['UoB', 'BAU', 'LAU', 'USJ', 'SGUB', 'USEK', 'AUB', 'LU'];
   for (const name of BOOTHS) {
     const b = document.createElement('button');
     b.textContent = name;
@@ -703,10 +820,35 @@
       }
       fromSetupLink = false;
     }
+    if (!cfg.dir) { openPanel('direction'); return; }
     closePanels();
     showMain();
     setOnline(true);
     startCamera();
+  }
+
+  // Every phone, once: does it check people in, or out? (Switch in the settings.)
+  function chooseDir(dir) {
+    unlockSound();
+    cfg.dir = dir;
+    store.set('cfg', cfg);
+    applyDir();
+    closePanels();
+    showMain();
+    setOnline(navigator.onLine);
+    startCamera();
+  }
+  function applyDir() {
+    if (DC) return;
+    const out = OUT();
+    document.title = out ? 'NGA Check-out' : 'NGA Check-in';
+    $('modeName').textContent = out ? 'CHECK-OUT' : 'CHECK-IN';
+    $('outBanner').classList.toggle('hidden', !out);
+    $('switchDirBtn').textContent = out ? 'Switch this phone to checking in' : 'Switch this phone to checking out';
+    $('camHint').textContent = out ? 'Point the camera at the QR code of the student leaving.'
+                                   : "Point the camera at the attendee's boarding pass QR code.";
+    indexRoster();
+    renderSearch();
   }
 
   // Show the setup QR so a teammate's phone is ready in seconds.
@@ -742,7 +884,16 @@
   }
 
   // ── wire up ──────────────────────────────────────────────────────────────
-  $('settingsBtn').onclick = () => (cfg.api && cfg.key && (DC || cfg.device) ? openPanel('menu') : openSetup());
+  $('settingsBtn').onclick = () => (cfg.api && cfg.key && (DC || (cfg.device && cfg.dir)) ? openPanel('menu') : openSetup());
+  $('dirIn').onclick = () => chooseDir('in');
+  $('dirOut').onclick = () => chooseDir('out');
+  $('switchDirBtn').onclick = () => {
+    cfg.dir = OUT() ? 'in' : 'out';
+    store.set('cfg', cfg);
+    applyDir();
+    closePanels();
+    toast(OUT() ? 'This phone now checks students OUT' : 'This phone now checks students IN');
+  };
   $('saveBtn').onclick = connect;
   $('closeSetupBtn').onclick = closePanels;
   $('boothOtherBtn').onclick = () => chooseBooth($('boothInput').value);
@@ -768,14 +919,14 @@
     $('changeBoothBtn').classList.add('hidden');
     $('countLabel').textContent = 'double-checked';
     $('camHint').textContent = "Point the camera at a pass on the laptop's review page.";
-  }
+  } else applyDir();
   $('searchInput').oninput = renderSearch;
   $('searchInput').onkeydown = e => {
     if (e.key === 'Enter') { const first = $('searchResults').querySelector('button.primary'); if (first) first.click(); }
   };
   window.addEventListener('online', () => flushQueue());
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && scanner && scanner.isScanning && navigator.wakeLock && !wakeLock)
+    if (document.visibilityState === 'visible' && running() && navigator.wakeLock && !wakeLock)
       navigator.wakeLock.request('screen').then(w => { wakeLock = w; }).catch(() => {});
   });
 
@@ -785,12 +936,14 @@
     setOnline(navigator.onLine);
     refreshRoster();
     startCamera(true);
-  } else if (cfg.api && cfg.key && cfg.device && !fromSetupLink) {
+  } else if (cfg.api && cfg.key && cfg.device && cfg.dir && !fromSetupLink) {
     // A phone that's already set up: straight back to scanning.
     showMain();
     setOnline(navigator.onLine);
     refreshRoster().then(ok => { if (ok) flushQueue(); });
     startCamera(true);
+  } else if (cfg.api && cfg.key && cfg.device && !fromSetupLink) {
+    openPanel('direction');   // set up before check-out existed: just ask in or out
   } else if (cfg.api && cfg.key) {
     boothMsg('');
     openPanel('booth');
