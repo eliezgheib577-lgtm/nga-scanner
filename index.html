@@ -94,8 +94,11 @@
   .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 20; max-width: 92vw;
     background: #111; color: #fff; padding: 12px 16px; border-radius: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.4); font-size: 14px; }
   code { background: var(--navy); padding: 2px 6px; border-radius: 6px; word-break: break-all; }
-  .booths { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0 12px; }
-  .booths button { background: var(--amber); color: var(--navy); font-weight: 800; font-size: 22px; padding: 18px 0; }
+  /* each booth and its volunteer, side by side */
+  .duos { display: grid; gap: 10px; margin: 8px 0 12px; }
+  .duo { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 6px; border-radius: 14px; background: var(--navy-3); }
+  .duo button { background: var(--amber); color: var(--navy); font-weight: 800; font-size: 20px; padding: 13px 0; }
+  .duo button.vol { background: transparent; color: var(--amber); box-shadow: inset 0 0 0 2px var(--amber); }
   .row input { flex: 1; min-width: 0; width: auto; }
   .menu { display: grid; gap: 8px; }
   .menu button { padding: 13px 14px; text-align: left; }
@@ -133,7 +136,7 @@
 
   <section class="panel hidden" id="booth">
     <h2>Which booth is this phone?</h2>
-    <div class="booths" id="boothButtons"></div>
+    <div class="duos" id="boothButtons"></div>
     <div class="row">
       <input class="search" id="boothInput" placeholder="Other name, e.g. VIP gate" autocomplete="off">
       <button class="small-btn primary" id="boothOtherBtn">OK</button>
@@ -798,13 +801,20 @@
     else { boothMsg(''); openPanel('booth'); }
   }
 
-  // Every phone: one tap on its booth, and scanning starts. Edit BOOTHS to rename or add booths.
+  // Every phone: one tap on its booth (or that booth's volunteer, "AUB Vol"), then in or out.
+  // Edit BOOTHS to rename or add booths.
   const BOOTHS = ['UoB', 'BAU', 'LAU', 'USJ', 'SGUB', 'USEK', 'AUB', 'LU'];
   for (const name of BOOTHS) {
-    const b = document.createElement('button');
-    b.textContent = name;
-    b.onclick = () => chooseBooth(name);
-    $('boothButtons').append(b);
+    const duo = document.createElement('div');
+    duo.className = 'duo';
+    for (const label of [name, name + ' Vol']) {
+      const b = document.createElement('button');
+      b.textContent = label;
+      if (label !== name) b.className = 'vol';
+      b.onclick = () => chooseBooth(label);
+      duo.append(b);
+    }
+    $('boothButtons').append(duo);
   }
   async function chooseBooth(name) {
     name = String(name || '').trim().slice(0, 30);
