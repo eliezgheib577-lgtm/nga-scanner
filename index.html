@@ -253,16 +253,20 @@
 
   // Setup QR / link: index.html#api=...&key=...  The phone then only needs to pick its booth.
   // With &mode=double-check it opens the double-check instead (before the emails; nobody is checked in).
-  let fromSetupLink = false;
+  let fromSetupLink = false, sameSheet = true;   // sameSheet: the list saved on this phone is from this sheet
   if (location.hash.length > 1) {
     const p = new URLSearchParams(location.hash.slice(1));
     if (p.get('api') && p.get('key')) {
-      cfg.api = p.get('api').trim();
-      cfg.key = p.get('key');
-      cfg.mode = p.get('mode') === 'double-check' ? 'dc' : '';
-      cfg.dir = '';
-      store.set('cfg', cfg);
-      fromSetupLink = true;
+      const api = p.get('api').trim(), key = p.get('key'), mode = p.get('mode') === 'double-check' ? 'dc' : '';
+      sameSheet = api === cfg.api;
+      // The same link again (e.g. reopened from WhatsApp) on a phone that's already set up: carry on
+      // scanning, even with no internet. Any other link sets the phone up again.
+      const again = sameSheet && key === cfg.key && mode === (cfg.mode || '') && !!cfg.device && !!cfg.dir;
+      if (!again) {
+        cfg.api = api; cfg.key = key; cfg.mode = mode; cfg.dir = '';
+        store.set('cfg', cfg);
+        fromSetupLink = true;
+      }
     }
     history.replaceState(null, '', location.pathname + location.search);   // keep the key out of sight
   }
@@ -859,15 +863,20 @@
     if (fromSetupLink || !roster.people.length) {
       boothMsg('Connecting…');
       if (!await loadRoster(boothMsg)) {
-        boothMsg($('boothMsg').textContent + ' Ask the registration lead to show the setup QR again.', 'err');
-        return;
+        if (!(sameSheet && roster.people.length)) {
+          boothMsg($('boothMsg').textContent + ' Ask the registration lead to show the setup QR again.', 'err');
+          return;
+        }
+        // no internet, but this phone already has the list from this sheet: carry on with it
+        setOnline(false);
+        toast('No internet: using the list saved on this phone. It syncs when the signal is back.', 6000);
       }
       fromSetupLink = false;
     }
     if (!cfg.dir) { openPanel('direction'); return; }
     closePanels();
     showMain();
-    setOnline(true);
+    setOnline(online === false ? false : navigator.onLine);
     startCamera();
   }
 
@@ -879,7 +888,7 @@
     applyDir();
     closePanels();
     showMain();
-    setOnline(navigator.onLine);
+    setOnline(online === false ? false : navigator.onLine);
     startCamera();
   }
   function applyDir() {
