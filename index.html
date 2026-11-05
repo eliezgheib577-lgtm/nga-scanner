@@ -53,6 +53,8 @@
   .result .r-title { font-size: 15px; font-weight: 800; letter-spacing: 3px; text-transform: uppercase; opacity: .9; }
   .result .r-name { font-size: clamp(26px, 8vw, 40px); font-weight: 800; line-height: 1.1; margin: 10px 0 6px; word-break: break-word; }
   .result .r-sub { font-size: 17px; opacity: .95; white-space: pre-line; }
+  .result .r-note { margin-top: 14px; max-width: 340px; background: #fff; color: #0B1F3A; border-radius: 12px;
+    padding: 9px 14px; font-size: 16px; font-weight: 800; text-wrap: balance; }
   .r-actions { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 340px; margin-top: 14px; }
   .r-actions button { padding: 13px; font-size: 17px; font-weight: 800; }
   #dcSame { background: #fff; color: #0B6B36; } #dcDiff { background: rgba(0,0,0,.28); color: #fff; }
@@ -212,6 +214,7 @@
         <div class="r-title" id="rTitle"></div>
         <div class="r-name" id="rName"></div>
         <div class="r-sub" id="rSub"></div>
+        <div class="r-note hidden" id="rNote"></div>
         <div class="r-actions hidden" id="rActions">
           <button id="dcSame">✓ Same name as on the pass</button>
           <button id="dcDiff">✗ Different name</button>
@@ -427,7 +430,12 @@
   }
 
   // ── scanning ─────────────────────────────────────────────────────────────
-  function showResult(kind, title, name, sub, ms) {
+  // People without a LeMSIC ID have "N/A" (no digits) in the ID column: tell the person scanning.
+  function noId(id) { const v = String(id == null ? '' : id).trim(); return !!v && !/\d/.test(v); }
+  const idPart = id => id && !noId(id) ? 'ID ' + id + ' · ' : '';
+  const noIdNote = (name, id) => noId(id) ? (name || 'This person') + ' does not have a LeMSIC ID' : '';
+
+  function showResult(kind, title, name, sub, ms, note) {
     const icons = { ok: '✓', warn: '!', bad: '✕', wait: '…', dc: '' };
     $('result').className = 'result ' + kind;
     $('rIcon').textContent = icons[kind];
@@ -436,6 +444,8 @@
     $('rTitle').textContent = title;
     $('rName').textContent = name || '';
     $('rSub').textContent = sub || '';
+    $('rNote').textContent = note || '';
+    $('rNote').classList.toggle('hidden', !note);
     clearTimeout(hideTimer);
     if (ms) hideTimer = setTimeout(hideResult, ms);
   }
@@ -473,9 +483,9 @@
     }
     beep('ok');
     pending = res;
-    const who = [res.id ? 'ID ' + res.id : '', res.email].filter(Boolean).join(' · ');
+    const who = [res.id && !noId(res.id) ? 'ID ' + res.id : '', res.email].filter(Boolean).join(' · ');
     showResult('dc', 'This pass belongs to', res.name,
-               who + (res.doubleCheck ? `\nAlready marked ${res.doubleCheck}` : ''));
+               who + (res.doubleCheck ? `\nAlready marked ${res.doubleCheck}` : ''), 0, noIdNote(res.name, res.id));
   }
 
   async function answer(same) {
@@ -523,24 +533,26 @@
     const name = res.name || (local && local.name) || '';
     const later = res.offline ? ' · offline, will sync' : '', offlineCheck = res.offline ? ' (offline check)' : '';
     const where = res.by ? ' by ' + res.by : '';
+    const id = res.id != null ? res.id : local && local.id;
+    const note = noIdNote(name, id), longer = note ? 1500 : 0;   // a bit longer, so the notice can be read
     if (res.status === 'checked_in') {
       beep('ok');
-      showResult('ok', 'Welcome aboard', name, `${res.id ? 'ID ' + res.id + ' · ' : ''}checked in ${res.at}${later}`, 2500);
+      showResult('ok', 'Welcome aboard', name, `${idPart(id)}checked in ${res.at}${later}`, 2500 + longer, note);
     } else if (res.status === 'back_in') {
       beep('ok');
-      showResult('ok', 'Welcome back', name, `${res.left ? 'left at ' + res.left + ' · ' : ''}back in ${res.at}${later}`, 2500);
+      showResult('ok', 'Welcome back', name, `${res.left ? 'left at ' + res.left + ' · ' : ''}back in ${res.at}${later}`, 2500 + longer, note);
     } else if (res.status === 'checked_out') {
       beep('ok');
-      showResult('out', 'Checked out', name, `${res.id ? 'ID ' + res.id + ' · ' : ''}checked out ${res.at}${later}`, 3000);
+      showResult('out', 'Checked out', name, `${idPart(id)}checked out ${res.at}${later}`, 3000 + longer, note);
     } else if (res.status === 'already') {
       beep('warn');
-      showResult('warn', 'Already checked in', name, `at ${res.at || '?'}${where}${offlineCheck}`, 5000);
+      showResult('warn', 'Already checked in', name, `at ${res.at || '?'}${where}${offlineCheck}`, 5000, note);
     } else if (res.status === 'already_out') {
       beep('warn');
-      showResult('warn', 'Already checked out', name, `at ${res.at || '?'}${where}${offlineCheck}`, 5000);
+      showResult('warn', 'Already checked out', name, `at ${res.at || '?'}${where}${offlineCheck}`, 5000, note);
     } else if (res.status === 'not_in') {
       beep('warn');
-      showResult('warn', 'Not checked in', name, `They haven't checked in yet${offlineCheck}`, 5000);
+      showResult('warn', 'Not checked in', name, `They haven't checked in yet${offlineCheck}`, 5000, note);
     } else {
       beep('bad');
       showResult('bad', 'Not a valid pass', code, res.offline ? 'Not on this device\'s list (offline)' : 'This code is not on the list', 5000);
