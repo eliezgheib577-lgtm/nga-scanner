@@ -274,6 +274,10 @@
   let recent = store.get(DC ? 'dcRecent' : 'recent', []);
   let byCode = new Map();
   let online = null, lastScan = { code: '', time: 0 }, busy = false, hideTimer = null, pending = null;
+  let flushing = null, probing = false;
+  // A scan waits this long for the sheet. After that (or with no signal) the phone decides from its own
+  // list straight away and sends the scans to the sheet in the background, until the sheet answers again.
+  const SCAN_WAIT = 6000;
   let scanner = null, cameras = [], camIndex = 0, audio = null, wakeLock = null;
 
   // ── helpers ──────────────────────────────────────────────────────────────
@@ -315,9 +319,9 @@
   // ── talking to the Google Sheet ──────────────────────────────────────────
   class ApiError extends Error {}
 
-  async function api(action, payload = {}) {
+  async function api(action, payload = {}, wait = 12000) {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 12000);
+    const timer = setTimeout(() => ctrl.abort(), wait);
     let res;
     try {
       // text/plain keeps this a "simple" request, which Apps Script accepts cross-origin.
@@ -410,13 +414,26 @@
     store.set('roster', roster);
   }
 
-  async function flushQueue() {
+  function flushQueue() {   // one sync at a time
+    if (!flushing) flushing = sendQueue().finally(() => { flushing = null; });
+    return flushing;
+  }
+  async function sendQueue() {
     while (queue.length) {
       const item = queue[0];
       let res;
       try { res = await api(item.action || 'checkin', { code: item.code, device: cfg.device, scannedAt: item.scannedAt }); }
-      catch (e) { setOnline(false); return; }
-      queue.shift(); store.set('queue', queue);
+      catch (e) {
+        if (e instanceof ApiError) toast('⚠ Not synced: ' + e.message, 8000);   // e.g. a wrong staff key: say so
+        setOnline(false);
+        return;
+      }
+      const i = queue.indexOf(item);
+      if (i >= 0) { queue.splice(i, 1); store.set('queue', queue); }
+      else if (UNDOABLE.includes(res.status)) {   // undone on the phone while it was being sent: undo it in the sheet too
+        try { await api('undo', { code: item.code }); } catch (e) { /* rare: it stays in the sheet */ }
+      }
+      setOnline(true);
       if (res.status === 'already' && res.by !== cfg.device) {
         toast(`⚠ Synced: ${res.name} had already checked in at ${res.at}${res.by ? ' (' + res.by + ')' : ''}`, 8000);
       }
@@ -516,18 +533,23 @@
     busy = true;
     const local = byCode.get(code);
     const action = OUT() ? 'checkout' : 'checkin';
-    showResult('wait', OUT() ? 'Checking out…' : 'Checking…', local ? local.name : code, '');
 
     let res;
-    try {
-      res = await api(action, { code, device: cfg.device, scannedAt: new Date().toISOString() });
-    } catch (e) {
-      if (e instanceof ApiError) {
-        beep('bad'); showResult('bad', 'Problem', e.message, 'Check the settings (⚙)', 6000);
-        return;
-      }
-      setOnline(false);
+    if (online === false || queue.length) {   // no or weak signal, or older scans still syncing: no waiting
       res = offlineScan(code, local, action);
+      if (online !== false) flushQueue();
+    } else {
+      showResult('wait', OUT() ? 'Checking out…' : 'Checking…', local ? local.name : code, '');
+      try {
+        res = await api(action, { code, device: cfg.device, scannedAt: new Date().toISOString() }, SCAN_WAIT);
+      } catch (e) {
+        if (e instanceof ApiError) {
+          beep('bad'); showResult('bad', 'Problem', e.message, 'Check the settings (⚙)', 6000);
+          return;
+        }
+        setOnline(false);
+        res = offlineScan(code, local, action);
+      }
     }
     remember(res);
     const name = res.name || (local && local.name) || '';
@@ -572,7 +594,7 @@
     queue.push({ code, action, scannedAt: new Date().toISOString(), at,
                  prev: { at: local.at, by: local.by, out: local.out, inside: local.inside } });
     store.set('queue', queue);
-    setOnline(false);
+    setOnline(online);   // shows "1 to sync"
     const res = action === 'checkout' ? { ...base, status: 'checked_out', at }
       : local.at ? { ...base, status: 'back_in', at, left: local.out } : { ...base, status: 'checked_in', at };
     remember(res);
@@ -978,6 +1000,17 @@
     if (queue.length) await flushQueue();
     if (!busy) await refreshRoster();
   }, 30000);
+  // Offline: try the sheet again every 5 seconds, and go back to normal as soon as it answers.
+  setInterval(async () => {
+    if (online !== false || probing || !cfg.api || !cfg.key) return;
+    probing = true;
+    try { if (queue.length) await flushQueue(); else await refreshRoster(); }
+    finally { probing = false; }
+  }, 5000);
+  // Keep a copy of this page on the phone, so it opens even with no internet (sw.js).
+  if ('serviceWorker' in navigator && location.protocol === 'https:') {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
 })();
 </script>
 </body>
